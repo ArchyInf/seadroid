@@ -82,8 +82,11 @@ public class WidgetUtils {
         String suffix = FileUtils.getFileExtension(file);
         String mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(suffix);
 
+        boolean forceChooser = false;
+
         if (TextUtils.isEmpty(mime)) {
-            mime = "*/*"; // forces app chooser dialog on unknown type//
+            mime = "*/*";
+            forceChooser = true;
         }
 
         if (MIME_ANDROID.equals(mime)) {
@@ -96,23 +99,41 @@ public class WidgetUtils {
 
         Uri uri = FileProvider.getUriForFile(context, BuildConfig.FILE_PROVIDER_AUTHORITIES, file);
         openIntent.setDataAndType(uri, mime);
-        openIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        
+        // todo: check FLAG_GRANT_PERSISTABLE_URI_PERMISSION; leads to SecurityException
+        //openIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        openIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
 
         boolean isAvailable = isIntentAvailable(context, openIntent);
         if (isAvailable) {
             try {
-                // Use Intent.createChooser to avoid SecurityException when system defaults to protected components (like NFC TagViewer)
-                Intent chooserIntent = Intent.createChooser(openIntent, context.getString(R.string.open_as));
-                chooserIntent.addFlags(FLAG_ACTIVITY_NEW_TASK);
-                context.startActivity(chooserIntent);
-                SLogs.e("Third app has Available");
-            } catch (SecurityException e) {
-                SLogs.e("SecurityException when opening file: " + e.getMessage());
+                if (forceChooser) {
+                    // Unknown MIME: force chooser so the user can locate an app manually
+                    Intent chooserIntent = Intent.createChooser(openIntent, context.getString(R.string.open_as));
+                    chooserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    context.startActivity(chooserIntent);
+                    SLogs.d("Opened file via createChooser startActivity");
+                } else {
+                    try {
+                        // Allows default resolution ("Always" / "Just Once" or instant launch)
+                        context.startActivity(openIntent);
+                        SLogs.d("Opened file via standard startActivity");
+                    } catch (SecurityException e) {
+                        SLogs.w("SecurityException on startActivity, falling back to Chooser: " + e.getMessage());
+
+                        // Mitigates permission denial on protected system components (e.g., NFC TagViewer)
+                        Intent chooserIntent = Intent.createChooser(openIntent, context.getString(R.string.open_as));
+                        chooserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        context.startActivity(chooserIntent);
+                        SLogs.d("Opened file via createChooser startActivity");
+                    } 
+                }
+            } catch (ActivityNotFoundException e) {
                 showAppNotFoundError(context, suffix, mime);
             } catch (Exception e) {
                 SLogs.e("Exception when opening file: " + e.getMessage());
                 Toasts.show(R.string.activity_not_found);
-            }
+            } 
         } else {
             showAppNotFoundError(context, suffix, mime);
         }
